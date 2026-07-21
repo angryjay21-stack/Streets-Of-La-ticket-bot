@@ -80,3 +80,7 @@ Never place your real Discord token in GitHub.
 ## Button color note
 
 Discord buttons only support preset colors. This project uses Discord's blue primary buttons with purple embeds and blue-purple artwork for the closest premium neon look.
+
+## Fixed close-button response
+
+The close button now acknowledges the Discord interaction immediately before generating transcripts or changing channel permissions. This prevents the “application did not respond in time” error on larger tickets.

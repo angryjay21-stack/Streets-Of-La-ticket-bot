@@ -477,19 +477,40 @@ async function closeTicket(interaction, automatic = false) {
   const meta = ticketMeta(channel);
   if (!meta) return;
 
-  await sendTranscript(channel, automatic ? `Automatically closed after ${AUTO_CLOSE_HOURS} hours of inactivity` : `Closed by ${interaction.user.tag}`);
+  // Discord requires button interactions to be acknowledged within a few seconds.
+  // A transcript can take longer, so acknowledge the click before doing any work.
+  if (!automatic && !interaction.deferred && !interaction.replied) {
+    await interaction.deferUpdate();
+  }
 
-  await channel.setTopic(buildTopic(meta.openerId, meta.type, 'closed', meta.claimedBy));
+  const closedBy = automatic
+    ? `Automatically closed after ${AUTO_CLOSE_HOURS} hours of inactivity`
+    : `Closed by ${interaction.user.tag}`;
+
+  // Do not prevent the ticket from closing if a DM or log upload fails.
+  try {
+    await sendTranscript(channel, closedBy);
+  } catch (error) {
+    console.error('Transcript creation or delivery failed:', error);
+  }
+
+  await channel.setTopic(
+    buildTopic(meta.openerId, meta.type, 'closed', meta.claimedBy)
+  );
+
   await channel.permissionOverwrites.edit(meta.openerId, {
     ViewChannel: false,
     SendMessages: false,
   });
 
-  const closedName = channel.name.startsWith('closed-') ? channel.name : `closed-${channel.name}`;
+  const closedName = channel.name.startsWith('closed-')
+    ? channel.name
+    : `closed-${channel.name}`;
+
   await channel.setName(sanitizeName(closedName));
 
   if (!automatic) {
-    await interaction.update({
+    await interaction.editReply({
       content: `🔒 Ticket closed by ${interaction.user}.`,
       embeds: interaction.message.embeds,
       components: ticketButtons('closed'),
