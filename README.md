@@ -20,11 +20,9 @@ Premium Discord ticket system for a FiveM server, prepared for GitHub and Railwa
 - Only the configured staff role can claim, close, reopen, or delete tickets
 - Claim button
 - Close button
-- Reopen button
-- Delete button
-- Automatic HTML transcript when a ticket closes
+- Clean plain-text transcript when a ticket closes
 - Transcript sent to the ticket logs channel
-- Transcript privately sent to the member who opened the ticket
+- Transcript privately sent to the member who opened the ticket, showing only who said each message and what they said
 - Automatic closing after 48 hours of inactivity
 - One open ticket per member
 - Duplicate support-panel protection after Railway restarts
@@ -84,3 +82,13 @@ Discord buttons only support preset colors. This project uses Discord's blue pri
 ## Fixed close-button response
 
 The close button now acknowledges the Discord interaction immediately before generating transcripts or changing channel permissions. This prevents the “application did not respond in time” error on larger tickets.
+
+## Close behavior
+
+When an authorized staff member presses **Close Ticket**, the bot:
+
+1. Immediately acknowledges the Discord button.
+2. Creates a clean `.txt` transcript containing only timestamps, usernames, messages, and attachment links.
+3. Sends the transcript to the ticket logs channel.
+4. Sends the transcript to the ticket opener by DM.
+5. Deletes the ticket channel after 5 seconds.

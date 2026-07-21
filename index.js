@@ -191,24 +191,7 @@ function panelPayload() {
   };
 }
 
-function ticketButtons(status = 'open') {
-  if (status === 'closed') {
-    return [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(REOPEN_BUTTON_ID)
-          .setLabel('Reopen Ticket')
-          .setEmoji('🔓')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(DELETE_BUTTON_ID)
-          .setLabel('Delete Ticket')
-          .setEmoji('🗑️')
-          .setStyle(ButtonStyle.Danger)
-      ),
-    ];
-  }
-
+function ticketButtons() {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -351,7 +334,7 @@ async function createTicket(interaction, type) {
   await ticketChannel.send({
     content: `${interaction.user} <@&${process.env.STAFF_ROLE_ID}>`,
     embeds: [ticketEmbed],
-    components: ticketButtons('open'),
+    components: ticketButtons(),
     files: [logo],
     allowedMentions: {
       users: [interaction.user.id],
@@ -394,46 +377,32 @@ function escapeHtml(value) {
 async function makeTranscript(channel) {
   const messages = await fetchAllMessages(channel);
 
-  const rows = messages.map((message) => {
-    const attachments = [...message.attachments.values()]
-      .map((a) => `<div><a href="${escapeHtml(a.url)}">${escapeHtml(a.name || a.url)}</a></div>`)
-      .join('');
+  const lines = [
+    `Streets of LA Ticket Transcript`,
+    `Channel: #${channel.name}`,
+    `Generated: ${new Date().toLocaleString()}`,
+    '',
+  ];
 
-    const embeds = message.embeds
-      .map((e) => `<div class="embed"><strong>${escapeHtml(e.title || '')}</strong><br>${escapeHtml(e.description || '')}</div>`)
-      .join('');
+  for (const message of messages) {
+    // Skip bot-only control messages and embeds with no written message content.
+    const content = (message.content || '').trim();
 
-    return `
-      <div class="message">
-        <div class="meta">${escapeHtml(message.author.tag)} • ${new Date(message.createdTimestamp).toLocaleString()}</div>
-        <div class="content">${escapeHtml(message.content || '').replace(/\n/g, '<br>')}</div>
-        ${attachments}
-        ${embeds}
-      </div>`;
-  }).join('\n');
+    if (content) {
+      const timestamp = new Date(message.createdTimestamp).toLocaleString();
+      lines.push(`[${timestamp}] ${message.author.tag}: ${content}`);
+    }
 
-  const html = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(channel.name)} Transcript</title>
-<style>
-body{font-family:Arial,sans-serif;background:#090615;color:#eee;padding:24px}
-h1{color:#a78bfa}
-.message{background:#15102b;border-left:4px solid #6d28d9;padding:12px;margin:10px 0;border-radius:8px}
-.meta{color:#a5b4fc;font-size:12px;margin-bottom:6px}
-.embed{background:#0f172a;border:1px solid #312e81;padding:10px;margin-top:8px;border-radius:6px}
-a{color:#60a5fa}
-</style>
-</head>
-<body>
-<h1>Streets of LA Ticket Transcript</h1>
-<p>Channel: #${escapeHtml(channel.name)}</p>
-${rows}
-</body>
-</html>`;
+    // Include attachment links only when a user attached something.
+    for (const attachment of message.attachments.values()) {
+      const timestamp = new Date(message.createdTimestamp).toLocaleString();
+      lines.push(
+        `[${timestamp}] ${message.author.tag}: [Attachment] ${attachment.url}`
+      );
+    }
+  }
 
-  return Buffer.from(html, 'utf8');
+  return Buffer.from(lines.join('\n'), 'utf8');
 }
 
 async function sendTranscript(channel, reason = 'Ticket closed') {
@@ -441,7 +410,7 @@ async function sendTranscript(channel, reason = 'Ticket closed') {
   if (!meta) return;
 
   const transcript = await makeTranscript(channel);
-  const filename = `${channel.name}-transcript.html`;
+  const filename = `${channel.name}-transcript.txt`;
 
   const logsChannel = await client.channels.fetch(process.env.TICKET_LOGS_CHANNEL_ID).catch(() => null);
   const opener = await client.users.fetch(meta.openerId).catch(() => null);
@@ -477,8 +446,7 @@ async function closeTicket(interaction, automatic = false) {
   const meta = ticketMeta(channel);
   if (!meta) return;
 
-  // Discord requires button interactions to be acknowledged within a few seconds.
-  // A transcript can take longer, so acknowledge the click before doing any work.
+  // Acknowledge the button immediately so Discord does not time out.
   if (!automatic && !interaction.deferred && !interaction.replied) {
     await interaction.deferUpdate();
   }
@@ -487,41 +455,31 @@ async function closeTicket(interaction, automatic = false) {
     ? `Automatically closed after ${AUTO_CLOSE_HOURS} hours of inactivity`
     : `Closed by ${interaction.user.tag}`;
 
-  // Do not prevent the ticket from closing if a DM or log upload fails.
+  // Create and deliver the transcript before deleting the channel.
   try {
     await sendTranscript(channel, closedBy);
   } catch (error) {
     console.error('Transcript creation or delivery failed:', error);
   }
 
-  await channel.setTopic(
-    buildTopic(meta.openerId, meta.type, 'closed', meta.claimedBy)
-  );
-
-  await channel.permissionOverwrites.edit(meta.openerId, {
-    ViewChannel: false,
-    SendMessages: false,
-  });
-
-  const closedName = channel.name.startsWith('closed-')
-    ? channel.name
-    : `closed-${channel.name}`;
-
-  await channel.setName(sanitizeName(closedName));
-
   if (!automatic) {
     await interaction.editReply({
-      content: `🔒 Ticket closed by ${interaction.user}.`,
+      content: `🔒 Ticket closed by ${interaction.user}. This channel will be deleted in 5 seconds.`,
       embeds: interaction.message.embeds,
-      components: ticketButtons('closed'),
+      components: [],
       allowedMentions: { users: [] },
-    });
+    }).catch(() => {});
   } else {
     await channel.send({
-      content: `🔒 This ticket was automatically closed after ${AUTO_CLOSE_HOURS} hours of inactivity.`,
-      components: ticketButtons('closed'),
-    });
+      content: `🔒 This ticket was automatically closed after ${AUTO_CLOSE_HOURS} hours of inactivity. This channel will be deleted in 5 seconds.`,
+    }).catch(() => {});
   }
+
+  setTimeout(() => {
+    channel.delete(closedBy).catch((error) => {
+      console.error('Failed to delete closed ticket channel:', error);
+    });
+  }, 5000);
 }
 
 client.once(Events.ClientReady, async (bot) => {
@@ -581,7 +539,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isButton()) return;
-    if (![CLAIM_BUTTON_ID, CLOSE_BUTTON_ID, REOPEN_BUTTON_ID, DELETE_BUTTON_ID].includes(interaction.customId)) return;
+    if (![CLAIM_BUTTON_ID, CLOSE_BUTTON_ID].includes(interaction.customId)) return;
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
 
@@ -610,7 +568,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.update({
         content: `${interaction.message.content}\n\n🙋 Claimed by ${interaction.user}`,
         embeds: [updatedEmbed],
-        components: ticketButtons('open'),
+        components: ticketButtons(),
         allowedMentions: { users: [] },
       });
       return;
@@ -621,33 +579,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.customId === REOPEN_BUTTON_ID) {
-      await channel.setTopic(buildTopic(meta.openerId, meta.type, 'open', meta.claimedBy));
-      await channel.permissionOverwrites.edit(meta.openerId, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-      });
-
-      const reopenedName = channel.name.replace(/^closed-/, '');
-      await channel.setName(sanitizeName(reopenedName));
-
-      await interaction.update({
-        content: `🔓 Ticket reopened by ${interaction.user}. <@${meta.openerId}>`,
-        embeds: interaction.message.embeds,
-        components: ticketButtons('open'),
-        allowedMentions: { users: [meta.openerId] },
-      });
-      return;
-    }
-
-    if (interaction.customId === DELETE_BUTTON_ID) {
-      await interaction.reply({
-        content: '🗑️ Ticket will be deleted in 5 seconds.',
-        ephemeral: true,
-      });
-      setTimeout(() => channel.delete(`Deleted by ${interaction.user.tag}`).catch(console.error), 5000);
-    }
   } catch (error) {
     console.error('Interaction error:', error);
 
